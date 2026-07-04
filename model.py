@@ -1,16 +1,12 @@
-# 导入PyTorch核心库：构建神经网络、张量计算的基础
+"""
+model.py
+    定义模型的backbooe,neck,attention,head模块, 并组装模型
+"""
 import torch
-# 导入PyTorch神经网络模块：包含所有层（Conv/Linear/C2f等）的基类
 import torch.nn as nn
-from ultralytics import YOLO
-# 从ultralytics（YOLO官方库）导入YOLO11核心模块：Conv（卷积层）、C2f（特征融合层）、SPPF（空间金字塔池化）
 from ultralytics.nn.modules import Conv, C2f, SPPF
-# 导入numpy：用于数值计算（如ROI损失的数组统计）
-import numpy as np
 
-# ===================== YOLO11 n/s/l 核心配置字典 =====================
 # 定义不同尺寸模型的核心参数，通过model_size动态选择，平衡速度与精度
-# 键：模型尺寸（n=nano/s=small/l=large）；值：各模块的通道数、层数、dropout等配置
 YOLO11_CONFIGS = {
     # nano：最小模型，通道缩放0.25，速度最快（适配低算力设备）
     "n": {
@@ -28,7 +24,7 @@ YOLO11_CONFIGS = {
         "backbone": {"channels": [32, 64, 64, 128, 128, 256, 256, 256], "c2f_layers": [1, 2, 2]},
         "neck": {"channels": [128, 64]},
         "head": {"hidden_dim": 32},
-        "dropout": 0.1
+        "dropout": 0.15
     },
     # large：大模型，通道缩放1.0，精度最高（适配高算力设备）
     "l": {
@@ -39,17 +35,40 @@ YOLO11_CONFIGS = {
     }
 }
 
+class LocalGrid_Attention(nn.Module):
+    """局部网格注意力：建模相邻+指定ROI对的关联"""
+    def __init__(self, atten_weight, dim=256, num_heads=4):
+        super().__init__()
+        # 多头自注意力层，batch_first=True 适配 [B, N, C] 格式
+        self.attn = nn.MultiheadAttention(dim, num_heads, batch_first=True)
+        # 层归一化：稳定训练，适配注意力输出
+        self.norm = nn.LayerNorm(dim)
+        self.atten_weight = atten_weight
 
-class YOLO11ROIBackbone(nn.Module):
-    """动态配置的YOLO11 Backbone（支持n/s/l）：负责提取单个ROI的多尺度语义特征"""
+    def forward(self, roi_feat):
+        # 自注意力（Q=K=V=roi_feat）
+        # 让12个ROI两两计算相关性
+        B, N, C = roi_feat.shape
+        if N == 1:      # 只有一张图片模拟自注意力
+            roi_feat = torch.cat([roi_feat, roi_feat], dim=1)  # [B,3,C] 复制自身模拟注意力输入
+            attn_feat, attn_weights = self.attn(roi_feat, roi_feat, roi_feat)
+            out = self.norm(roi_feat + self.atten_weight * attn_feat)
+            return out[:, :1, :], attn_weights  # 切回1个ROI输出
+            # return roi_feat, None
+
+        attn_feat, attn_weights = self.attn(roi_feat, roi_feat, roi_feat)
+
+        # 残差连接 + 归一化：保留原始ROI特征，叠加注意力交互特征
+        return self.norm(roi_feat + self.atten_weight * attn_feat),attn_weights
+
+class Model_Backbone(nn.Module):
+    """提取单个ROI的多尺度语义特征"""
 
     def __init__(self, model_size="n", ch=3):
-        # 继承nn.Module的初始化方法（必须调用）
         super().__init__()
-        # 根据模型尺寸获取backbone配置（核心：动态适配不同尺寸）
         cfg = YOLO11_CONFIGS[model_size]["backbone"]
-        self.channels = cfg["channels"]  # 各层输出通道数列表（共8层）
-        self.c2f_layers = cfg["c2f_layers"]  # C2f模块的堆叠层数（共3个C2f）
+        self.channels = cfg["channels"]
+        self.c2f_layers = cfg["c2f_layers"]
 
         # ===================== 动态构建Backbone网络层 =====================
         # layer0：Conv层（输入通道ch=3，输出通道16/32/64，核3x3，步长2）→ 下采样，通道翻倍
@@ -88,12 +107,11 @@ class YOLO11ROIBackbone(nn.Module):
         return x
 
 
-class YOLO11ROINeck(nn.Module):
-    """动态配置的YOLO11 Neck（支持n/s/l）：承接Backbone特征，融合+降维为1D向量"""
+class Model_Neck(nn.Module):
+    """承接Backbone特征，融合+降维为1D向量"""
 
     def __init__(self, model_size="n"):
         super().__init__()
-        # 获取backbone和neck的配置
         bb_cfg = YOLO11_CONFIGS[model_size]["backbone"]
         neck_cfg = YOLO11_CONFIGS[model_size]["neck"]
 
@@ -120,13 +138,13 @@ class YOLO11ROINeck(nn.Module):
         return x
 
 
-class YOLO11ROIHead(nn.Module):
-    """动态配置的YOLO11 Head（支持n/s/l）：将1D特征转为12个ROI的三分类结果"""
+class Model_Head(nn.Module):
+    """将1D特征转为12个ROI的二分类结果"""
 
-    def __init__(self, model_size="n", num_roi=12, num_classes=3):
+    def __init__(self, model_size="n", num_roi=12, num_classes=2):
         super().__init__()
-        self.num_roi = num_roi  # ROI数量（固定12）
-        self.num_classes = num_classes  # 分类数（固定3：0=无效ROI，1=有效无方块，2=有效有方块）
+        self.num_roi = num_roi  # ROI数量
+        self.num_classes = num_classes  # 分类数
         head_cfg = YOLO11_CONFIGS[model_size]["head"]  # 获取head配置
         dropout = YOLO11_CONFIGS[model_size]["dropout"]  # dropout率
         neck_cfg = YOLO11_CONFIGS[model_size]["neck"]  # 获取neck配置
@@ -137,50 +155,54 @@ class YOLO11ROIHead(nn.Module):
             Conv(neck_cfg["channels"][1], head_cfg["hidden_dim"], 1, 1),
             # Dropout层：随机失活部分神经元，防止过拟合
             nn.Dropout(dropout),
-            # Linear层：全连接分类，将16维特征转为3类logits
+            # Linear层：全连接分类，将16维特征转为2类logits
             nn.Linear(head_cfg["hidden_dim"], num_classes)
         )
 
     def forward(self, x):
-        """
-        Head前向传播：将1D特征转为12个ROI的分类结果
-        :param x: 输入向量 → [B×12, 32]（n模型）
-        :return: 输出logits → [B, 12, 3]（B=批次，12=ROI数，3=分类数）
-        """
-        # 关键：Conv层要求输入为4D张量（N,C,H,W），因此需要扩展维度
-        # unsqueeze(-1).unsqueeze(-1) → [B×12,32] → [B×12,32,1,1]
+        # x: [B,12,C]  注意力输出特征
+        B, N, C = x.shape
+        # 展平为 [B×12, C] 适配原有流程
+        x = x.reshape(B*N, C)
         x = self.head[0](x.unsqueeze(-1).unsqueeze(-1))
-        # squeeze(-1).squeeze(-1) → [B×12,16,1,1] → [B×12,16]（还原为2D张量）
         x = x.squeeze(-1).squeeze(-1)
-        x = self.head[1](x)  # Dropout → 维度不变
-        x = self.head[2](x)  # Linear → [B×12,3]（每个ROI的3类logits）
-        # reshape → [B,12,3]（将B×12个ROI拆分为B批次，每批次12个ROI）
-        x = x.reshape(-1, self.num_roi, self.num_classes)
-        return x
+        x = self.head[1](x)
+        x = self.head[2](x)
+        return x.reshape(B, N, self.num_classes)  # [B,12,2]
 
 
 class YOLO11ROIClassifier(nn.Module):
     """最终模型：整合Backbone+Neck+Head，支持n/s/l三种尺寸，无预训练权重依赖"""
 
-    def __init__(self, model_size="n", num_roi=12, num_classes=3, roi_size=64):
+    def __init__(self, model_size="n", num_roi=12, num_classes=2, roi_size=64, atten_weight=0.15):
         super().__init__()
+        self.attn_weights = None
         self.model_size = model_size  # 模型尺寸（n/s/l）
         self.num_roi = num_roi  # ROI数量（固定12）
         self.num_classes = num_classes  # 分类数（固定3）
         self.roi_size = roi_size  # ROI图像尺寸（固定64x64）
+        self.atten_weight = atten_weight        # 注意力特征所占的权重
+        neck_cfg = YOLO11_CONFIGS[model_size]["neck"]
+        attn_dim = neck_cfg["channels"][1]  # 动态适配n/s/l维度
 
         # ===================== 组装完整模型 =====================
-        self.backbone = YOLO11ROIBackbone(model_size=model_size)  # 特征提取
-        self.neck = YOLO11ROINeck(model_size=model_size)  # 特征融合+降维
-        self.head = YOLO11ROIHead(model_size=model_size, num_roi=num_roi, num_classes=num_classes)  # 分类头
+        self.backbone = Model_Backbone(model_size=model_size)  # 特征提取
+        self.neck = Model_Neck(model_size=model_size)  # 特征融合+降维
+        self.spatial_attention = LocalGrid_Attention(
+            atten_weight=self.atten_weight,
+            dim=attn_dim,
+            num_heads=4 if model_size!="n" else 2  # 参数调整：n模型heads=2，避免维度不匹配
+        )
+        self.head = Model_Head(model_size=model_size, num_roi=num_roi, num_classes=num_classes)  # 分类头
 
     def forward(self, roi_imgs):
         """
         模型整体前向传播：输入12个ROI图像，输出分类logits
         :param roi_imgs: 输入张量 → [B, 12, 3, 64, 64]（B=批次，12=ROI数，3=通道，64=尺寸）
-        :return: pred_logits → [B, 12, 3]（每个ROI的3类预测logits）
+        :return: pred_logits → [B, 12, 2]（每个ROI的2类预测logits）
         """
         B = roi_imgs.shape[0]  # 获取批次大小B（如B=8）
+        N = roi_imgs.shape[1]
         # 关键：将12个ROI展平为批次维度 → [B,12,3,64,64] → [B×12,3,64,64]
         # 作用：让12个ROI共享Backbone，批量提取特征，提升计算效率
         roi_flat = roi_imgs.reshape(-1, 3, self.roi_size, self.roi_size)
@@ -188,220 +210,8 @@ class YOLO11ROIClassifier(nn.Module):
         # ===================== 特征提取→融合→分类 =====================
         feat_backbone = self.backbone(roi_flat)  # [B×12,3,64,64] → [B×12,128,4,4]（n模型）
         feat_neck = self.neck(feat_backbone)     # → [B×12,32]（n模型）
-        pred_logits = self.head(feat_neck)       # → [B,12,3]
+        feat_attn = feat_neck.reshape(B, N, -1)
+        feat_attn,self.attn_weights = self.spatial_attention(feat_attn)
+        pred_logits = self.head(feat_attn)       # → [B,12,2]
 
         return pred_logits
-
-
-# ===================== 二分类指标计算（核心修改） =====================
-def calculate_2c_metrics(pred_logits, cls_target):
-    """
-    计算二分类任务的核心指标（总准确率/正样本精准率/召回率/F1）
-    :param pred_logits: 模型输出 → [B,12,2]（logits值）
-    :param cls_target: 真实标签 → [B,12]（0=无方块，1=有方块）
-    :return: 指标字典 → 包含总准确率、正样本指标
-    """
-    # 1. 获取预测类别
-    pred_cls = torch.argmax(pred_logits, dim=-1)  # [B,12]
-    B, num_roi = pred_cls.shape
-
-    # 2. 计算总准确率
-    total_correct = (pred_cls == cls_target).sum().item()
-    total_acc = total_correct / (cls_target.numel() + 1e-6)
-
-    # 3. 计算正样本（1类：有方块）指标
-    # 正样本真实掩码
-    pos_target_mask = (cls_target == 1)
-    # 正样本预测掩码
-    pos_pred_mask = (pred_cls == 1)
-    pos_total = pos_target_mask.sum().item()
-
-    # 正样本准确率
-    pos_correct = (pred_cls[pos_target_mask] == cls_target[pos_target_mask]).sum().item() if pos_total > 0 else 0.0
-    pos_acc = pos_correct / (pos_total + 1e-6)
-
-    # 混淆矩阵
-    tp = (pos_pred_mask & pos_target_mask).sum().item()  # 真阳性
-    fn = ((~pos_pred_mask) & pos_target_mask).sum().item()  # 假阴性
-    fp = (pos_pred_mask & (~pos_target_mask)).sum().item()  # 假阳性
-
-    # 精准率、召回率、F1
-    pos_precision = tp / (tp + fp + 1e-6)
-    pos_recall = tp / (tp + fn + 1e-6)
-    pos_f1 = 2 * pos_precision * pos_recall / (pos_precision + pos_recall + 1e-6)
-
-    # 返回指标
-    return {
-        "total_acc": total_acc,
-        "pos_metrics": {"acc": pos_acc, "precision": pos_precision, "recall": pos_recall, "f1": pos_f1}
-    }
-
-
-# ===================== 二分类验证函数（核心修改） =====================
-def evaluate(model, val_loader, loss_fn, device):
-    """
-    模型验证函数：计算验证集的平均损失、二分类指标均值
-    :param model: 训练好的YOLO11ROIClassifier模型
-    :param val_loader: 验证集数据加载器
-    :param loss_fn: 损失函数（YOLO11ROIFocalLoss2C）
-    :param device: 计算设备（cpu/cuda）
-    :return: 二分类相关平均指标
-    """
-    model.eval()
-    val_epoch_loss = 0.0
-    batch_count = 0
-    val_roi_loss = np.zeros(12)
-
-    # 初始化二分类指标累加
-    total_acc_sum = 0.0
-    pos_acc_sum, pos_precision_sum, pos_recall_sum, pos_f1_sum = 0.0, 0.0, 0.0, 0.0
-    pred_cls_all = []
-    pred_pos_mean_li = []
-    pred_pos_std_li = []
-    with torch.no_grad():
-        for batch_idx, (roi_imgs, cls_target, conf_weight) in enumerate(val_loader):
-            roi_imgs = roi_imgs.to(device)
-            cls_target = cls_target.to(device)
-            conf_weight = conf_weight.to(device)
-
-            pred_logits = model(roi_imgs)
-            loss = loss_fn(pred_logits, cls_target, conf_weight)
-
-            val_epoch_loss += loss.item()
-            batch_count += 1
-            val_roi_loss += loss_fn.per_roi_loss
-            pred_cls = torch.argmax(pred_logits, dim=-1)  # [B,12]
-            pred_pos_count = (pred_cls == 1).sum(dim=1).cpu().numpy()  # 每张图正样本数
-            pred_cls_all.extend(pred_pos_count)
-
-            pred_pos_mean = np.mean(pred_cls_all)
-            pred_pos_std = np.std(pred_cls_all)
-            pred_pos_mean_li.append(pred_pos_mean)
-            pred_pos_std_li.append(pred_pos_std)
-
-            # 计算二分类指标
-            metrics = calculate_2c_metrics(pred_logits, cls_target)
-            total_acc_sum += metrics["total_acc"]
-            pos_acc_sum += metrics["pos_metrics"]["acc"]
-            pos_precision_sum += metrics["pos_metrics"]["precision"]
-            pos_recall_sum += metrics["pos_metrics"]["recall"]
-            pos_f1_sum += metrics["pos_metrics"]["f1"]
-
-    print(f"📊 验证集预测有方块数量：{(sum(pred_pos_mean_li) / len(pred_pos_mean_li)):.2f} ± {(sum(pred_pos_std_li) / len(pred_pos_std_li)):.2f}（目标：8.00）")
-    # 计算均值
-    avg_val_loss = val_epoch_loss / batch_count if batch_count > 0 else 0.0
-    val_roi_avg_loss = val_roi_loss / batch_count if batch_count > 0 else np.zeros(12)
-    avg_total_acc = total_acc_sum / batch_count if batch_count > 0 else 0.0
-    avg_pos_acc = pos_acc_sum / batch_count if batch_count > 0 else 0.0
-    avg_pos_precision = pos_precision_sum / batch_count if batch_count > 0 else 0.0
-    avg_pos_recall = pos_recall_sum / batch_count if batch_count > 0 else 0.0
-    avg_pos_f1 = pos_f1_sum / batch_count if batch_count > 0 else 0.0
-
-    # 返回二分类指标（移除三分类相关）
-    return (avg_val_loss, val_roi_avg_loss, avg_total_acc,
-            avg_pos_acc, avg_pos_precision, avg_pos_recall, avg_pos_f1)
-def load_yolo11_pretrained_weights(model, model_size, load_path):
-    """
-    加载YOLO11预训练权重并精准对齐到你的YOLO11ROIClassifier模型
-    :param model: 你的YOLO11ROIClassifier实例
-    :param model_size: 模型尺寸 "n"/"s"/"l"
-    :return: 加载权重后的模型
-    """
-    # 1. 加载Ultralytics官方YOLO11预训练模型
-    print(f"📥 加载YOLO11-{model_size.upper()}预训练权重...")
-    yolo11_official = YOLO(load_path)
-    official_state_dict = yolo11_official.model.state_dict()
-
-    # 2. 构建精准的键名映射表（核心：官方层编号 → 你的模型层名）
-    # 官方层编号: 0→layer0, 1→layer1, ..., 8→layer8, 9→layer9
-    mapped_state_dict = {}
-    current_model_dict = model.state_dict()
-
-    # 遍历所有官方权重键
-    for official_key, official_param in official_state_dict.items():
-        # 跳过和分类头相关的权重（官方YOLO11的检测头）
-        if any(key in official_key for key in ["detect", "bbox", "cls"]):
-            continue
-
-        # 拆分官方键名，例如："model.0.conv.weight" → ["model", "0", "conv", "weight"]
-        parts = official_key.split(".")
-        if len(parts) < 3 or parts[0] != "model":
-            continue  # 跳过非模型层的权重
-
-        # 提取官方层编号（如0,1,2...）
-        try:
-            official_layer_idx = int(parts[1])
-        except ValueError:
-            continue  # 跳过非数字编号的层
-
-        # 确定目标模块（backbone/neck）和目标层名
-        if 0 <= official_layer_idx <= 7:
-            # 官方层0-7 → 你的backbone.layer0-layer7
-            target_module = "backbone"
-            target_layer_name = f"layer{official_layer_idx}"
-        elif 8 <= official_layer_idx <= 9:
-            # 官方层8-9 → 你的neck.layer8-layer9
-            target_module = "neck"
-            target_layer_name = f"layer{official_layer_idx}"
-        else:
-            continue  # 跳过10及以后的层（官方检测头）
-
-        # 构建你的模型键名（替换前缀）
-        # 示例：官方"model.0.conv.weight" → 你的"backbone.layer0.conv.weight"
-        target_key_parts = [target_module, target_layer_name] + parts[2:]
-        target_key = ".".join(target_key_parts)
-
-        # 检查当前模型是否有该键，且形状匹配
-        if target_key in current_model_dict:
-            if current_model_dict[target_key].shape == official_param.shape:
-                mapped_state_dict[target_key] = official_param
-                # print(f"✅ 匹配权重: {official_key:40s} → {target_key}")
-            # else:
-                # print(f"⚠️ 跳过权重（形状不匹配）: {official_key}")
-                # print(f"   官方形状: {official_param.shape} | 你的模型形状: {current_model_dict[target_key].shape}")
-        # else:
-            # print(f"⚠️ 跳过权重（键不存在）: {official_key} → {target_key}")
-
-    # 3. 加载对齐后的权重（strict=False跳过head等不匹配层）
-    print("\n🔧 开始加载权重到模型...")
-    missing_keys, unexpected_keys = model.load_state_dict(mapped_state_dict, strict=False)
-
-    # 4. 打印加载结果统计
-    print(f"\n📊 权重加载结果:")
-    print(f"   ✅ 成功加载权重数: {len(mapped_state_dict)}")
-    print(f"   ⚠️  未加载的键（自定义head）: {len(missing_keys)}")
-    print(f"   ❌ 意外的键: {len(unexpected_keys)}")
-
-    # 打印关键缺失键（仅前5个，避免刷屏）
-    if missing_keys:
-        print(f"   主要缺失键（自定义层）: {missing_keys[:5]}")
-
-    return model
-
-
-def resume_training_from_checkpoint(model, optimizer, checkpoint_path, device):
-    """
-    断点续训：加载之前训练的checkpoint，恢复模型、优化器、最优F1、训练轮数
-    :param model: 初始化好的YOLO11ROIClassifier模型
-    :param optimizer: 初始化好的优化器
-    :param checkpoint_path: 之前保存的模型路径（.pt文件）
-    :param device: 训练设备
-    :return: best_pos_f1(最优F1), start_epoch(起始训练轮数)
-    """
-    # 加载checkpoint
-    checkpoint = torch.load(checkpoint_path, map_location=device)
-
-    # 加载模型权重
-    model.load_state_dict(checkpoint['model_state_dict'])
-    # 加载优化器状态
-    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    # 加载最优F1
-    best_pos_f1 = checkpoint.get('best_pos_f1', 0.0)
-    # 加载起始轮数
-    start_epoch = checkpoint.get('epoch', 0)
-
-    print(f"✅ 断点续训加载成功！")
-    print(f"├─ 恢复模型权重 | 起始轮数：{start_epoch}")
-    print(f"└─ 恢复最优正样本F1：{best_pos_f1:.4f}")
-
-    return best_pos_f1, start_epoch

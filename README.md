@@ -6,9 +6,11 @@
 
 ```bash
 pip install torch ultralytics openvino opencv-python
-python train.py      # 训练
-python infer.py      # 推理
-python zb_main.py    # Z-buffer 主流程
+python main.py          # 统一入口 (训练/推理/导出)
+python train_main.py    # 训练
+python infer_main.py    # 推理
+python show_atten.py    # 注意力可视化
+python pt_to_onnx_openvino.py  # 模型导出
 ```
 
 ## 版本迭代日志
@@ -16,14 +18,16 @@ python zb_main.py    # Z-buffer 主流程
 ### yolo11_Custom_12roi — 基础 3 分类版
 ### yolo11_Custom_12roi_c2 — 2 分类 + 数量约束版
 ### yolo11_zb_12roi_c2 — Z-buffer 遮挡处理集成版
-
 ### yolo11_Custom_pointsize — Point-size 加权版
-- **新增** conf_weight 参数: 损失函数中点云密度置信度加权
-- **新增** YOLO11ROIBCEWithLogitsLoss2C: BCE 损失变体
-- **新增** log_to_datasets.py: 日志文件→数据集转换
-- **新增** post_processing.py: 推理结果后处理
-- **新增** realdata_trans.py: 真实数据格式转换
-- **新增** evlate/: 评估工具目录
-- **移除** zb_infer.py / zb_train.py (功能合并至 zb_main.py)
-- **修改** loss.py: 所有损失函数增加 conf_weight 输入
-- **修改** model.py / train.py / infer.py: 适配 point-size 加权
+
+### yolo11_Custom_atten — 注意力机制引入版
+- **架构重构**: 模块化重写, 15 个新文件
+- **新增** LocalGrid_Attention: 局部网格注意力模块
+- **新增** show_atten.py: 注意力热力图可视化
+- **新增** main.py: 统一入口 (train/infer/export)
+- **新增** load_model.py / train_config.py: 配置集中管理
+- **新增** dataset_check.py / dataset_filter.py: 数据质量工具
+- **新损失**: CountLoss / FocalLoss / BCELoss (重命名重构)
+- **移除** Z-buffer 管线: zb_func/zb_main/zb_dataset 等
+- **移除** evlate/ log_to_datasets/ post_processing/ 等
+- **分类**: 2 类 (二分类, 保持)

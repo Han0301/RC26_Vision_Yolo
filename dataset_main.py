@@ -1,3 +1,7 @@
+"""
+dataset_main.py
+    定义数据集类, 加载数据集
+"""
 import os
 import json
 import cv2
@@ -6,6 +10,19 @@ import torch
 from torch.utils.data import Dataset
 
 ROI_GROUPS = [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10, 11]]
+
+def _compute_confidence(point_size):
+    point_size = np.array(point_size, dtype=np.float32)
+    conf_weight = np.zeros(12, dtype=np.float32)
+
+    for group in ROI_GROUPS:
+        group_vals = point_size[group]
+        max_val = group_vals.max()
+        if max_val < 1e-6:
+            conf_weight[group] = 1.0
+        else:
+            conf_weight[group] = group_vals / max_val
+    return conf_weight
 
 class ROI12ImageDataset(Dataset):
     def __init__(self, dataset_roots, roi_img_size=64, transform=None):
@@ -27,7 +44,7 @@ class ROI12ImageDataset(Dataset):
                     self.valid_samples.append((root_idx, img_idx))
 
         # 打印合并后数据集信息
-        print(f"=== 数据集初始化完成（多文件夹合并）===")
+        print(f"=== 数据集初始化完成 ===")
         for i, root in enumerate(self.dataset_roots):
             print(f"[{i + 1}] 根目录：{root}")
         print(f"总有效样本数：{len(self.valid_samples)}")
@@ -46,19 +63,6 @@ class ROI12ImageDataset(Dataset):
             roi_imgs.append(roi_img)
         return np.stack(roi_imgs, axis=0)
 
-    def _compute_confidence(self, point_size):
-        point_size = np.array(point_size, dtype=np.float32)
-        conf_weight = np.zeros(12, dtype=np.float32)
-
-        for group in ROI_GROUPS:
-            group_vals = point_size[group]
-            max_val = group_vals.max()
-            if max_val < 1e-6:
-                conf_weight[group] = 1.0
-            else:
-                conf_weight[group] = group_vals / max_val
-        return conf_weight
-
     def _load_label(self, dataset_root, img_idx):
         label_dir = os.path.join(dataset_root, "labels")
         label_path = os.path.join(label_dir, f"label_{img_idx}.json")
@@ -69,7 +73,7 @@ class ROI12ImageDataset(Dataset):
         assert "point_size" in ann and len(ann["point_size"]) == 12
 
         cls_target = np.array(ann["labels"], dtype=np.int64)
-        conf_weight = self._compute_confidence(ann["point_size"])
+        conf_weight = _compute_confidence(ann["point_size"])
 
         return cls_target, conf_weight
 
