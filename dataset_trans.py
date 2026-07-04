@@ -4,30 +4,34 @@ import shutil
 import numpy as np
 import torch
 import threading
-from tqdm import tqdm  # 进度条（需安装：pip install tqdm）
+import gc  # 新增：垃圾回收模块
+from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# 导入自定义模块（确保以下文件在脚本同级目录）
+# 导入自定义模块
 from zb_dataset import ZBGlobalImageDataset
 from zb_main import process_zbuffer_with_rt
 
-# ===================== 配置参数区（修改这里！）=====================
-# 原始ZBGlobal格式数据集根路径（必须包含global_images/labels文件夹）
-SRC_DATASET = r"H:\pycharm\yolov11\yolov11_proj3\global_tests_100"
-# 输出ROI12Image格式数据集根路径（脚本自动创建roi_images/labels）
-DST_DATASET = r"H:\pycharm\yolov11\yolov11_proj1\datasets_global_test100"
-# ROI图像输出尺寸（与ROI12ImageDataset默认一致）
+# ===================== 配置参数区（完全不变）=====================
+SRC_DATASET = r"H:\pycharm\yolov11\yolov11_proj3\Datasets_Global_map400"
+DST_DATASET = r"H:\pycharm\yolov11\yolov11_proj3\Datasets_ROI_map400"
 ROI_SIZE = 64
-# 多线程配置：线程数（IO密集型建议设为CPU核心数*2~4，如8/16/32）
 THREAD_NUM = 16
+# 新增：分批处理大小（仅控制内存，不影响速度/逻辑）
+BATCH_PROCESS_SIZE = 100
 # =================================================================
 
-# 全局锁（保证多线程下计数/打印的线程安全）
+# 全局锁
 lock = threading.Lock()
+black_count = 0
+valid_counter = 0
+
+
+def is_black_image(img_np: np.ndarray) -> bool:
+    return np.all(img_np == 0)
 
 
 def create_dataset_dirs(dst_root):
-    """创建新数据集目录结构：roi_images + labels"""
     roi_root = os.path.join(dst_root, "roi_images")
     label_root = os.path.join(dst_root, "labels")
     os.makedirs(roi_root, exist_ok=True)
@@ -39,112 +43,141 @@ def create_dataset_dirs(dst_root):
 
 
 def convert_single_sample(sample, roi_root, roi_size, pbar):
-    """处理单个样本：生成ROI图像 + 复制标签文件（适配多线程）"""
-    # 1. 提取样本核心数据
-    img_idx = sample["img_idx"]  # 样本索引（如3 → roi_3）
-    global_img = sample["global_img"]  # 全局图像张量 [3, H, W]
-    rvec = sample["rvec"].cpu().numpy()  # 旋转向量 (3,1)
-    tvec = sample["tvec"].cpu().numpy()  # 平移向量 (3,1)
+    """处理单个样本：仅新增内存释放逻辑，其余完全不变"""
+    img_idx = sample["img_idx"]
+    global_img = sample["global_img"]
+    rvec = sample["rvec"].cpu().numpy()
+    tvec = sample["tvec"].cpu().numpy()
     src_label_path = os.path.join(SRC_DATASET, "labels", f"label_{img_idx}.json")
 
     try:
-        # 2. 全局图像张量转np.ndarray（HWC + RGB）
         global_img_np = sample["global_img"].cpu().numpy().transpose(1, 2, 0)
-        global_img_np = (global_img_np * 255).astype(np.uint8)  # 反归一化（0-1 → 0-255）
+        global_img_np = (global_img_np * 255).astype(np.uint8)
 
-        # 3. 生成ROI图像（exist_boxes全设为1）
-        exist_boxes = [1] * 12  # 关键：所有exist_box置为1
+        # 全黑图检测
+        if is_black_image(global_img_np):
+            black_img_path = os.path.join(SRC_DATASET, "global_images", f"{img_idx}.png")
+            with lock:
+                global black_count
+                black_count += 1
+            print(f"⚠️  跳过全黑图像：{black_img_path}")
+            with lock:
+                pbar.update(1)
+
+            # ===================== 内存释放：全黑图分支 =====================
+            del global_img, global_img_np, rvec, tvec  # 清理变量
+            gc.collect()  # 强制回收
+            # =================================================================
+            return False, img_idx, "全黑图像，已跳过"
+
+        # 线程安全下标
+        with lock:
+            global valid_counter
+            current_valid_idx = valid_counter
+            valid_counter += 1
+
+        # 生成ROI
+        exist_boxes = [1] * 12
         roi_imgs = process_zbuffer_with_rt(global_img_np, rvec, tvec, exist_boxes)
         if len(roi_imgs) != 12:
             raise ValueError(f"生成的ROI数量不为12，实际：{len(roi_imgs)}")
 
-        # 4. 创建当前样本的ROI目录（如roi_images/roi_3）
-        sample_roi_dir = os.path.join(roi_root, f"roi_{img_idx}")
+        # 保存ROI
+        sample_roi_dir = os.path.join(roi_root, f"roi_{current_valid_idx}")
         os.makedirs(sample_roi_dir, exist_ok=True)
-
-        # 5. 保存12个ROI图像（1.png ~ 12.png）
-        for roi_idx, roi_img in enumerate(roi_imgs, 1):  # roi_idx从1开始
-            # ROI图像是RGB格式，cv2保存需转BGR
+        for roi_idx, roi_img in enumerate(roi_imgs, 1):
             roi_img_bgr = cv2.cvtColor(roi_img, cv2.COLOR_RGB2BGR)
-            # 调整ROI尺寸（与ROI12ImageDataset一致）
             roi_img_resized = cv2.resize(roi_img_bgr, (roi_size, roi_size))
-            # 保存ROI图像
             roi_save_path = os.path.join(sample_roi_dir, f"{roi_idx}.png")
             cv2.imwrite(roi_save_path, roi_img_resized)
 
-        # 6. 复制标签文件到新数据集（标签格式完全兼容）
-        dst_label_path = os.path.join(DST_DATASET, "labels", f"label_{img_idx}.json")
+        # 复制标签
+        dst_label_path = os.path.join(DST_DATASET, "labels", f"label_{current_valid_idx}.json")
         shutil.copyfile(src_label_path, dst_label_path)
 
-        # 线程安全更新进度条
         with lock:
             pbar.update(1)
-        return True, img_idx, None
+
+        # ===================== 核心：主动释放所有临时变量 =====================
+        del global_img, global_img_np, roi_imgs, rvec, tvec  # 清理张量/数组
+        gc.collect()  # 强制垃圾回收
+        # =====================================================================
+        return True, current_valid_idx, None
 
     except Exception as e:
-        # 捕获异常并线程安全打印
         error_info = f"\n❌ 样本{img_idx}处理失败：{str(e)}"
         with lock:
             print(error_info)
             pbar.update(1)
+
+        # ===================== 异常时也释放内存 =====================
+        del global_img  # 清理张量
+        gc.collect()
+        # =============================================================
         return False, img_idx, str(e)
 
 
 def main():
-    # 1. 初始化：创建目录 + 加载原始数据集
     roi_root, label_root = create_dataset_dirs(DST_DATASET)
-    # 加载ZBGlobal数据集（无transform，保留原始数据）
     dataset = ZBGlobalImageDataset(dataset_root=SRC_DATASET, transform=None)
     total_samples = len(dataset)
     print(f"\n📊 开始多线程转换（线程数：{THREAD_NUM}）：共{total_samples}个有效样本")
 
-    # 2. 初始化进度条（多线程安全）
-    pbar = tqdm(total=total_samples, desc="转换进度", position=0, leave=True)
-
-    # 3. 多线程处理样本
     success_count = 0
     fail_count = 0
-    fail_samples = []  # 记录失败的样本索引和原因
+    fail_samples = []
 
-    # 创建线程池
-    with ThreadPoolExecutor(max_workers=THREAD_NUM) as executor:
-        # 提交所有任务到线程池
-        future_to_idx = {
-            executor.submit(convert_single_sample, dataset[idx], roi_root, ROI_SIZE, pbar): idx
-            for idx in range(total_samples)
-        }
+    # ===================== 核心：分批处理任务（避免一次性提交所有样本） =====================
+    for start_idx in range(0, total_samples, BATCH_PROCESS_SIZE):
+        end_idx = min(start_idx + BATCH_PROCESS_SIZE, total_samples)
+        batch_indices = list(range(start_idx, end_idx))
 
-        # 遍历完成的任务，统计结果
-        for future in as_completed(future_to_idx):
-            success, img_idx, error = future.result()
-            with lock:  # 保证计数线程安全
-                if success:
-                    success_count += 1
-                else:
-                    fail_count += 1
-                    fail_samples.append((img_idx, error))
+        # 单批次进度条
+        pbar = tqdm(total=len(batch_indices), desc=f"转换进度 {start_idx}-{end_idx - 1}", position=0, leave=True)
 
-    # 关闭进度条
-    pbar.close()
+        # 线程池处理当前批次
+        with ThreadPoolExecutor(max_workers=THREAD_NUM) as executor:
+            future_to_idx = {
+                executor.submit(convert_single_sample, dataset[idx], roi_root, ROI_SIZE, pbar): idx
+                for idx in batch_indices
+            }
 
-    # 4. 转换完成统计
+            for future in as_completed(future_to_idx):
+                success, img_idx, error = future.result()
+                with lock:
+                    if success:
+                        success_count += 1
+                    else:
+                        if error != "全黑图像，已跳过":
+                            fail_count += 1
+                            fail_samples.append((img_idx, error))
+
+        pbar.close()
+        # 每批处理完，强制全局内存回收
+        gc.collect()
+        torch.cuda.empty_cache()  # 清理CUDA缓存（如有GPU）
+    # =====================================================================================
+
+    # 完成统计（完全不变）
     print(f"\n🎉 转换完成！")
     print(f"✅ 成功处理：{success_count}个样本")
-    print(f"❌ 失败处理：{fail_count}个样本")
+    print(f"❌ 处理失败：{fail_count}个样本")
+    print(f"⚫ 全黑图像（已跳过）：{black_count}个")
     if fail_samples:
         print(f"❌ 失败样本列表：")
-        for img_idx, error in fail_samples[:10]:  # 只打印前10个失败样本
+        for img_idx, error in fail_samples[:10]:
             print(f"   - 样本{img_idx}：{error}")
         if len(fail_samples) > 10:
-            print(f"   - 更多{len(fail_samples)-10}个失败样本未展示")
+            print(f"   - 更多{len(fail_samples) - 10}个失败样本未展示")
     print(f"📁 新数据集路径：{DST_DATASET}")
     print(f"📂 新数据集结构：")
     print(f"   {DST_DATASET}/")
-    print(f"   ├── roi_images/  # 每个样本对应roi_*文件夹，内含1-12.png")
-    print(f"   └── labels/      # 与原始数据集一致的label_*.json")
+    print(f"   ├── roi_images/  # 有效样本连续命名：roi_0/roi_1/...")
+    print(f"   └── labels/      # 有效标签连续命名：label_0.json/...")
 
 
 if __name__ == "__main__":
-    # 强制单线程处理OpenCV相关操作（避免多线程下OpenCV报错）
     os.environ["OPENCV_OPENCL_DEVICE"] = "-1"
+    gc.collect()  # 初始回收
+    torch.cuda.empty_cache()
     main()

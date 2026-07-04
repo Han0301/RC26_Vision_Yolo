@@ -25,6 +25,11 @@ class CameraInfo:
         K_ = np.array([[1012.0711525658555, 0, 960.5],
                             [0, 1012.0711525658555, 540.5],
                             [0, 0, 1]], dtype=np.float64)
+
+        # K_ = np.array([[1380.4350, 0, 974.0183],
+        #                     [0, 1385.0788, 541.43],
+        #                     [0, 0, 1]], dtype=np.float64)
+
         distCoeffs_ = np.zeros((5, 1), dtype=np.float64)  # 无畸变
         extrinsic_ = np.eye(4)  # 外参矩阵（R+T）
         revc_ = np.zeros((3, 1), dtype=np.float32)  # 旋转向量（对应C++ rvec_）
@@ -389,13 +394,11 @@ class OcclusionHandling:
                         depth_regions[depth].append((col, row))
 
             # 找到有效最大点集
-            max_count = -1
             valid_max_points = []
             valid_depths = [o_front.surface_depth, o_up.surface_depth, o_side.surface_depth]
             for depth, points in depth_regions.items():
-                if any(abs(depth - vd) < 1e-4 for vd in valid_depths) and len(points) > max_count:
-                    max_count = len(points)
-                    valid_max_points = points
+                if any(abs(depth - vd) < 1e-4 for vd in valid_depths):
+                    valid_max_points.extend(points)
 
             # 判断是否更新图像: 有效像素过少, 不感兴趣会不更新图像
             if not self.is_update_image(box_lists, valid_max_points, interested_boxes, i):

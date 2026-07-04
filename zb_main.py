@@ -103,15 +103,15 @@ def process_zbuffer_with_rt_batch(global_imgs_np, rvecs, tvecs, exist_boxes_batc
 # -------------------------- 测试主函数 --------------------------
 if __name__ == "__main__":
     # 1. 加载图像（替换为你的路径）
-    IMAGE_PATH = r"E:\global_datasets_150\global_images\images_3.png"
+    IMAGE_PATH = r"H:\pycharm\yolov11\yolov11_proj3\Datasets_Global_map400\global_images\images_6995.png"
     test_image = cv2.imread(IMAGE_PATH)
 
     # 2. 输入R/T外参（示例：旋转向量转矩阵 + 平移向量）
-    rvec = np.array([1.209374, -1.208628, 1.208635], dtype=np.float32).reshape(3, 1)
+    rvec = np.array([1.276089, -1.098547, 1.098540], dtype=np.float32).reshape(3, 1)
 
-    tvec = np.array([-4.600191, 1.300726, -0.425132], dtype=np.float32).reshape(3, 1)
-    # exist_boxes = [1 * 12]
-    exist_boxes = [1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1]
+    tvec = np.array([-3.783217, 1.300021, -0.331593], dtype=np.float32).reshape(3, 1)
+    exist_boxes = [1 * 12]
+    # exist_boxes = [1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1]
 
     # 3. 执行核心处理（无里程计，直接3D→2D）
 
