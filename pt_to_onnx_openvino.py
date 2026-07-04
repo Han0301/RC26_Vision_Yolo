@@ -20,9 +20,9 @@ NUM_CLASSES = 3
 ROI_SIZE = 64
 
 # 文件路径（原始字符串避免转义）
-PT_MODEL_PATH = r"H:\pycharm\yolov11\yolov11_proj1\yolo11_Custom_12roi\model_pt\yolo11s_roi_16334.pt"
-ONNX_MODEL_PATH = r"H:\pycharm\yolov11\yolov11_proj1\yolo11_Custom_12roi\model_onnx\yolo11s_roi_16334.onnx"
-OPENVINO_IR_PATH = r"H:\pycharm\yolov11\yolov11_proj1\yolo11_Custom_12roi\model_openvino\yolo11s_roi_16334"
+PT_MODEL_PATH = r"H:\pycharm\yolov11\yolov11_proj1\yolo11_Custom_12roi\model_pt\yolo11s_roi_16334_new1.pt"
+ONNX_MODEL_PATH = r"H:\pycharm\yolov11\yolov11_proj1\yolo11_Custom_12roi\model_onnx\yolo11s_roi_16334_new1.onnx"
+OPENVINO_IR_PATH = r"H:\pycharm\yolov11\yolov11_proj1\yolo11_Custom_12roi\model_openvino\yolo11s_roi_16334_new1"
 
 # 输入配置
 BATCH_SIZE = 1
