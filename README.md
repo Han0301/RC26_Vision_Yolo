@@ -24,33 +24,35 @@ pip install torch ultralytics openvino opencv-python
 ### 训练
 
 ```bash
+# 标准训练
 python train.py
+# Z-buffer 训练
+python zb_train.py
 ```
 
 ### 推理
 
 ```bash
-# 基础推理
+# 标准推理
 python infer.py
-```
-
-### 模型导出
-
-```bash
-python pt_to_onnx_openvino.py
+# Z-buffer 推理
+python zb_infer.py
 ```
 
 ## 版本迭代日志
 
 ### yolo11_Custom_12roi — 基础 3 分类版
-- **模型**: YOLO11ROIBackbone + Neck + Head
-- **分类**: 3 类（0=无效ROI, 1=有效无方块, 2=有效有方块）
-- **损失**: YOLO11ROIFocalLoss3C
-- **文件**: model.py, train.py, inferencer.py, loss.py, dataset.py, create_real_datasets.py, pt_to_onnx_openvino.py
+- 3 分类 YOLOv11 模型, 12 ROI, FocalLoss
 
 ### yolo11_Custom_12roi_c2 — 2 分类 + 数量约束版
-- **改为 2 分类**: 删除无效类，简化为"有无方块"二分类
-- **新增** YOLO11ROICOUNTLOSS: 数量约束损失
-- **新增** compare_model.py 模型对比工具
-- **新增** infer.py 重构推理
-- **对比实验**: count_loss_weight=[0.0, 0.1, 0.2, 0.25]，结论 0.0 最佳
+- 2 分类, 新增 YOLO11ROICOUNTLOSS, 对比实验
+
+### yolo11_zb_12roi_c2 — Z-buffer 遮挡处理集成版
+- **新增** zb_func.py: Z-buffer 核心函数
+- **新增** zb_main.py: Z-buffer 主流程
+- **新增** zb_train.py: Z-buffer 训练
+- **新增** zb_infer.py: Z-buffer 推理
+- **新增** zb_dataset.py: Z-buffer 数据集
+- **新增** dataset_trans.py: 数据集转换
+- **新增** transform.py: 数据增强
+- 集成 Z-buffer 提升遮挡场景鲁棒性
