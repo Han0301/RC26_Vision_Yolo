@@ -8,7 +8,7 @@ from model import YOLO11ROIClassifier
 ROI_SIZE = 64
 YOLO11_MEAN = [0.485, 0.456, 0.406]
 YOLO11_STD = [0.229, 0.224, 0.225]
-MODEL_WEIGHT_PATH = r"H:\pycharm\yolov11\yolov11_proj4\yolo11Custom_atten\yolo11_pt\yolo11n_roi12_atten_18.pt"
+MODEL_WEIGHT_PATH = r"H:\pycharm\yolov11\yolov11_proj4\yolo11Custom_atten2\yolo11_pt\best_model.pt"
 
 # ===================== 1. 初始化推理预处理（容器化通用）=====================
 infer_transform = transforms.Compose([
@@ -92,7 +92,12 @@ print(f"容器内ROI数量: {model_input.shape[1]}")
 # ===================== 5. 初始化模型 + 加载权重 =====================
 model = YOLO11ROIClassifier(model_size="s", num_classes=2, num_roi=12, roi_size=64)
 checkpoint = torch.load(MODEL_WEIGHT_PATH, map_location="cpu")
-model.load_state_dict(checkpoint['model_state_dict'])
+if 'model_state_dict' in checkpoint:
+    model.load_state_dict(checkpoint['model_state_dict'])
+    print(f"✅ 加载checkpoint成功 | 最优F1: {checkpoint.get('best_pos_f1', 0.0):.4f}")
+else:
+    model.load_state_dict(checkpoint)
+    print(f"✅ 加载权重成功 | 路径: {MODEL_WEIGHT_PATH}")
 model.eval()
 
 # ===================== 6. 容器化批量推理 =====================

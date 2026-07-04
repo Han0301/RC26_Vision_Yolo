@@ -10,24 +10,29 @@ python main.py          # 统一入口 (训练/推理/导出)
 python train_main.py    # 训练
 python infer_main.py    # 推理
 python show_atten.py    # 注意力可视化
-python pt_to_onnx_openvino.py  # 模型导出
 ```
 
 ## 版本迭代日志
 
 ### yolo11_Custom_12roi — 基础 3 分类版
+- YOLO11ROIBackbone + Neck + Head, 3 分类 FocalLoss
+
 ### yolo11_Custom_12roi_c2 — 2 分类 + 数量约束版
+- 2 分类, 新增 YOLO11ROICOUNTLOSS 数量约束损失
+
 ### yolo11_zb_12roi_c2 — Z-buffer 遮挡处理集成版
+- 集成 Z-buffer 管线 (zb_func/zb_main/zb_train/zb_infer)
+
 ### yolo11_Custom_pointsize — Point-size 加权版
+- 损失函数增加 conf_weight 点云密度加权
 
 ### yolo11_Custom_atten — 注意力机制引入版
-- **架构重构**: 模块化重写, 15 个新文件
-- **新增** LocalGrid_Attention: 局部网格注意力模块
-- **新增** show_atten.py: 注意力热力图可视化
-- **新增** main.py: 统一入口 (train/infer/export)
-- **新增** load_model.py / train_config.py: 配置集中管理
-- **新增** dataset_check.py / dataset_filter.py: 数据质量工具
-- **新损失**: CountLoss / FocalLoss / BCELoss (重命名重构)
-- **移除** Z-buffer 管线: zb_func/zb_main/zb_dataset 等
-- **移除** evlate/ log_to_datasets/ post_processing/ 等
-- **分类**: 2 类 (二分类, 保持)
+- 模块化重构, 新增 LocalGrid_Attention 注意力模块
+
+### yolo11_Custom_atten2 — 注意力联合训练版
+- **改进训练策略**: 12ROI + 单张 ROI 共同训练
+- 防止模型过于依赖注意力模块
+- 支持任意数量图片输入（不局限 12 ROI 场景）
+- **移除** dataset_check.py / dataset_filter.py
+- **优化** 代码结构与训练配置
+- 保持 LocalGrid_Attention 注意力模块

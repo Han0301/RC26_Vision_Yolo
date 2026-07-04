@@ -7,17 +7,23 @@ import torch.nn as nn
 
 # 对全局数量的约束正则损失
 class CountLoss(nn.Module):
-    def __init__(self, exist_count = 8, weight = 0.1):
+    def __init__(self, exist_count=8, weight=0.1):
         super().__init__()
         self.exist_count = exist_count
         self.weight = weight
 
     def forward(self, pred_logits):
-        pred = torch.softmax(pred_logits, dim=-1)       # [B, 12, 2]
-        pred_exist = pred[...,1]        # [B, 12 ] 每个roi落在1类的概率
-        pred_exist_count = pred_exist.sum(dim=-1)       # 直接使用概率作为期望数量
-        count_loss = torch.mean((pred_exist_count - self.exist_count) ** 2)     # mse 损失
+        B, N, _ = pred_logits.shape
+        # 单ROI时，不计算数量损失（关键修复）
+        if N == 1:
+            return torch.tensor(0.0, device=pred_logits.device)
+
+        pred = torch.softmax(pred_logits, dim=-1)  # [B, N, 2]
+        pred_exist = pred[..., 1]  # [B, N ]
+        pred_exist_count = pred_exist.sum(dim=-1)
+        count_loss = torch.mean((pred_exist_count - self.exist_count) ** 2)
         return self.weight * count_loss
+
 
 # Focal Loss
 class FocalLoss(nn.Module):
@@ -33,26 +39,26 @@ class FocalLoss(nn.Module):
         self.per_roi_loss = None
 
     def forward(self, pred_logits, cls_target):
-        B = pred_logits.shape[0]
+        B, N, _ = pred_logits.shape
         device = pred_logits.device
         self.alpha = self.alpha.to(device)
 
         # 1. Softmax 计算概率
-        pred_probs = torch.softmax(pred_logits, dim=-1)  # [B,12,2]
+        pred_probs = torch.softmax(pred_logits, dim=-1)  # [B,N,2]
         # 2. 获取真实类别对应的概率
         cls_target_expand = cls_target.unsqueeze(-1)
-        p_t = torch.gather(pred_probs, dim=-1, index=cls_target_expand).squeeze(-1)  # [B,12]
+        p_t = torch.gather(pred_probs, dim=-1, index=cls_target_expand).squeeze(-1)  # [B,N]
         # 3. Focal 权重
-        focal_weight = (1 - p_t) ** self.gamma  # [B,12]
+        focal_weight = (1 - p_t) ** self.gamma  # [B,N]
         # 4. 类别加权
-        alpha_weight = self.alpha[cls_target]  # [B,12]
+        alpha_weight = self.alpha[cls_target]  # [B,N]
         # 5. 基础交叉熵损失
         ce_loss = nn.CrossEntropyLoss(reduction='none')(
             pred_logits.reshape(-1, self.num_classes),
             cls_target.reshape(-1)
-        ).reshape(B, self.num_roi)  # [B,12]
+        ).reshape(B, N)  # [B,N] 动态适配
         # 6. 加权Focal Loss
-        focal_loss = ce_loss * alpha_weight * focal_weight  # [B,12]
+        focal_loss = ce_loss * alpha_weight * focal_weight  # [B,N]
 
         # 7. 记录每个ROI的平均损失
         total_elem = torch.numel(focal_loss)

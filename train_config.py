@@ -27,7 +27,7 @@ train_config = {
     "RESUME_TRAIN": False,
     # RESUME_TRAIN = False, 从头训练
     "SAVE_DIR": "./yolo11_pt",  # 输出的模型路径
-    "MODEL_NAME": "roi12_atten_red17_.pt",
+    "MODEL_NAME": "yolo11n_roi12_atten_21.pt",
     # RESUME_TRAIN = True, 加载之前的模型继续训练
     "CHECKPOINT_PATH": r"./yolo11_pt/yolo11s_roi12_ps_6.pt"  # 之前保存的模型路径
 }
@@ -59,7 +59,7 @@ loss_config = {
 }
 
 loss_config_2 = {
-    "LOSS_WEIGHT": [2.0, 1.0],  # 损失在两个类别上面的权重
+    "LOSS_WEIGHT": [3.0, 1.0],  # 损失在两个类别上面的权重
     "FOCAL_LOSS": 1.5,  # 难样本挖掘系数
     # 学习率
     "LEARNING_RATE": 5e-5 if model_config["MODEL_SIZE"] == "l" else 1e-4 if model_config[
@@ -99,7 +99,7 @@ train_config_2 = {
     "RESUME_TRAIN": False,
     # RESUME_TRAIN = False, 从头训练
     "SAVE_DIR": "./yolo11_pt",  # 输出的模型路径
-    "MODEL_NAME": "roi12_atten_blue17_.pt",
+    "MODEL_NAME": "yolo11n_roi12_atten_14.pt",
     # RESUME_TRAIN = True, 加载之前的模型继续训练
     "CHECKPOINT_PATH": r"./yolo11_pt/yolo11s_roi12_ps_6.pt"  # 之前保存的模型路径
 }
@@ -139,12 +139,11 @@ dataset_config_4 = {
     "load_datasets": True,
     # load_datasets = True 指定数据集
     "DATASET_ROOTS": [  # 数据集路径
-        r"H:\pycharm\yolov11\yolov11_proj3\datasets_blue_mapnew250",
-        r"H:\pycharm\yolov11\yolov11_proj3\datasets_blue_mapnew250",
-        r"H:\pycharm\yolov11\yolov11_proj3\datasets_blue_mapnew250",
-        r"I:\datasets_real_blue_new785",
-        r"I:\datasets_real_blue_new785",
-        r"I:\datasets_real_blue_new785",
+        r"H:\pycharm\yolov11\yolov11_proj3\yolo11Custom_pointsize\test\mini_datasets_3066\datasets_1",
+        r"H:\pycharm\yolov11\yolov11_proj3\datasets_real_p423",
+        r"H:\pycharm\yolov11\yolov11_proj3\datasets_real_p423",
+        r"H:\pycharm\yolov11\yolov11_proj3\datasets_real_p423",
+        r"H:\pycharm\yolov11\yolov11_proj3\datasets_real_p423"
     ],
     "VAL_RATIO": 0.2,  # 验证集的占比
     # load_datasets = False 指定数据集和验证集
@@ -156,14 +155,12 @@ dataset_config_5 = {
     "load_datasets": True,
     # load_datasets = True 指定数据集
     "DATASET_ROOTS": [  # 数据集路径
-        r"H:\pycharm\yolov11\yolov11_proj3\Datasets_ROI_new400",
-        r"H:\pycharm\yolov11\yolov11_proj3\Datasets_ROI_new400",
-        r"H:\pycharm\yolov11\yolov11_proj3\datasets_test_new2520",
-        r"H:\pycharm\yolov11\yolov11_proj3\datasets_test_new2520",
-        r"H:\pycharm\yolov11\yolov11_proj3\datasets_test_new2520",
-        r"I:\car_red_new",
-        r"I:\car_red_new",
-        r"I:\car_red_new",
+        r"H:\pycharm\yolov11\yolov11_proj3\yolo11Custom_pointsize\test\mini_datasets_3066\datasets_1",
+        r"H:\pycharm\yolov11\yolov11_proj3\datasets_real_p423",
+        r"H:\pycharm\yolov11\yolov11_proj3\datasets_real_p423",
+        r"H:\pycharm\yolov11\yolov11_proj3\datasets_real_p423",
+        r"H:\pycharm\yolov11\yolov11_proj3\datasets_real_p423",
+        r"H:\pycharm\yolov11\yolov11_proj3\datasets_real_p423"
     ],
     "VAL_RATIO": 0.2,  # 验证集的占比
     # load_datasets = False 指定数据集和验证集

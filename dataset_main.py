@@ -25,33 +25,31 @@ def _compute_confidence(point_size):
     return conf_weight
 
 class ROI12ImageDataset(Dataset):
-    def __init__(self, dataset_roots, roi_img_size=64, transform=None):
+    def __init__(self, dataset_roots, roi_img_size=64, transform=None, single_roi=False):
         self.dataset_roots = dataset_roots if isinstance(dataset_roots, list) else [dataset_roots]
         self.roi_img_size = roi_img_size
         self.transform = transform
         self.valid_samples = []
+        self.single_roi = single_roi
 
-        # 遍历所有数据集根目录，合并样本
         for root_idx, dataset_root in enumerate(self.dataset_roots):
             roi_img_root = os.path.join(dataset_root, "roi_images")
             label_dir = os.path.join(dataset_root, "labels")
 
-            # 筛选当前根目录下的有效样本
-            for img_idx in range(50000):  # 保持原有的最大索引范围
+            for img_idx in range(50000):
                 roi_dir = os.path.join(roi_img_root, f"roi_{img_idx}")
                 label_path = os.path.join(label_dir, f"label_{img_idx}.json")
                 if os.path.exists(roi_dir) and os.path.exists(label_path):
                     self.valid_samples.append((root_idx, img_idx))
 
-        # 打印合并后数据集信息
         print(f"=== 数据集初始化完成 ===")
         for i, root in enumerate(self.dataset_roots):
             print(f"[{i + 1}] 根目录：{root}")
         print(f"总有效样本数：{len(self.valid_samples)}")
         print(f"ROI目标尺寸：{self.roi_img_size}×{self.roi_img_size}")
+        print(f"单ROI模式：{self.single_roi}")
 
     def _load_roi_imgs(self, dataset_root, img_idx):
-        """加载12个ROI图像"""
         roi_img_root = os.path.join(dataset_root, "roi_images")
         roi_dir = os.path.join(roi_img_root, f"roi_{img_idx}")
         roi_imgs = []
@@ -84,10 +82,8 @@ class ROI12ImageDataset(Dataset):
         root_idx, img_idx = self.valid_samples[idx]
         dataset_root = self.dataset_roots[root_idx]
 
-        # 1. 加载ROI
         roi_imgs = self._load_roi_imgs(dataset_root, img_idx)
 
-        # 2. 预处理
         if self.transform is not None:
             roi_imgs_list = []
             for roi_img in roi_imgs:
@@ -96,9 +92,14 @@ class ROI12ImageDataset(Dataset):
         else:
             roi_imgs = torch.from_numpy(roi_imgs).permute(0, 3, 1, 2).float() / 255.0
 
-        # 3. 加载标签
         cls_target, conf_weight = self._load_label(dataset_root, img_idx)
         cls_target = torch.from_numpy(cls_target)
         conf_weight = torch.from_numpy(conf_weight).float()
+
+        if self.single_roi:
+            rand_idx = torch.randint(0, 12, (1,)).item()
+            roi_imgs = roi_imgs[rand_idx:rand_idx+1]
+            cls_target = cls_target[rand_idx:rand_idx+1]
+            conf_weight = conf_weight[rand_idx:rand_idx+1]
 
         return roi_imgs, cls_target, conf_weight

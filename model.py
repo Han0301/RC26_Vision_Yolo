@@ -46,20 +46,21 @@ class LocalGrid_Attention(nn.Module):
         self.atten_weight = atten_weight
 
     def forward(self, roi_feat):
-        # 自注意力（Q=K=V=roi_feat）
-        # 让12个ROI两两计算相关性
         B, N, C = roi_feat.shape
-        if N == 1:      # 只有一张图片模拟自注意力
-            roi_feat = torch.cat([roi_feat, roi_feat], dim=1)  # [B,3,C] 复制自身模拟注意力输入
+        # ------------- 动态张量判断（ONNX兼容，不固化维度） -------------
+        # 条件：N == 1
+        is_single_roi = (N == 1)
+
+        if is_single_roi:
+            # 🔴 单ROI：直接返回原始特征，禁用注意力（和你原有训练逻辑完全一致）
+            attn_weights = torch.zeros((B, 1, 1), device=roi_feat.device)
+            out = self.norm(roi_feat)
+            return out, attn_weights
+        else:
+            # 🟢 12ROI：正常计算注意力（原有逻辑不变）
             attn_feat, attn_weights = self.attn(roi_feat, roi_feat, roi_feat)
             out = self.norm(roi_feat + self.atten_weight * attn_feat)
-            return out[:, :1, :], attn_weights  # 切回1个ROI输出
-            # return roi_feat, None
-
-        attn_feat, attn_weights = self.attn(roi_feat, roi_feat, roi_feat)
-
-        # 残差连接 + 归一化：保留原始ROI特征，叠加注意力交互特征
-        return self.norm(roi_feat + self.atten_weight * attn_feat),attn_weights
+            return out, attn_weights
 
 class Model_Backbone(nn.Module):
     """提取单个ROI的多尺度语义特征"""
