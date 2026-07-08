@@ -23,8 +23,6 @@ def resize_padding(image:np.ndarray, target_size: tuple = (640,640), padding_col
     now_image = np.full((target_w, target_h, 3), padding_color,dtype=np.uint8)
     now_image[pad_h:pad_h + now_h, pad_w:pad_w + now_w] = resized_image
     return now_image, (pad_w, pad_h), scale
-    
-    
 
 def preprocess(image : np.ndarray, target_size : tuple = (640,640)) -> tuple:
     # 1 bgr -> rgb
@@ -59,9 +57,24 @@ def calIOU(out1: result, out2: result):
     I = max(0, x_end - x_start) * max(0, y_end - y_start)
     U = out1.w * out1.h + out2.w * out2.h - I
     return I / U
-  
+
+# cls_result 排序完的当前列表 result
+def nms(cls_result:list, iou_threshold = 0.9) -> list:
+    keep_lists = []
+    for i, box_i in enumerate(cls_result):
+        if box_i is None:
+            continue
+        keep_lists.append(i)
+
+        for j in range(i + 1, len(cls_result)):
+            if cls_result[j] is None:
+                continue
+            if calIOU(box_i, cls_result[j]) > iou_threshold:
+                cls_result[j] = None
+    return [cls_result[t] for t in keep_lists]
+
 def postprocess(output_tensor, pad_w, pad_h, scale, conf_threshold = 0.85, iou_threshold = 0.9 ,target_size = (640,640)):
-    c, ancher_num, out_num = output_tensor.shape
+    _, _, out_num = output_tensor.shape
     class_num = out_num - 5
 
     pred_result = output_tensor[0]     # [25200, 7]
@@ -70,34 +83,53 @@ def postprocess(output_tensor, pad_w, pad_h, scale, conf_threshold = 0.85, iou_t
     result_list = [[] for _ in range(class_num)]
 
     for i in range(len(pred_result)):
-        x1,y1,w,h,conf = pred_result[i][0],pred_result[i][1],pred_result[i][2], pred_result[i][3], pred_result[i][4]
+        xc,yc,w,h,conf = pred_result[i][0],pred_result[i][1],pred_result[i][2], pred_result[i][3], pred_result[i][4]
         cls_conf = pred_result[i][5:]
         cls = cls_conf.argmax()
 
-        x1 = ((x1 - pad_w) / scale).clip(0,target_size[0])
-        y1 = ((y1 - pad_h) / scale).clip(0,target_size[1])
-        w = w / scale
-        h = h / scale
-        out = result(x1,y1,w,h,cls,conf)
+        x1 = ((xc - pad_w - w/2) / scale).clip(0,target_size[0])
+        y1 = ((yc - pad_h - h/2) / scale).clip(0,target_size[1])
+        w = int(w / scale)
+        h = int(h / scale)
+        out = result(int(x1),int(y1),w,h,cls,conf)
         result_list[out.cls].append(out)
 
     for cls in range(len(result_list)):
         # 该类别的所有结果
         cls_result = result_list[cls]
-        if len(cls_result) == 0:
+        if len(cls_result) <= 1:
             continue
+        # 当前类别的所有框
         cls_result.sort(key=lambda x: x.conf, reverse=True)
 
-        # 计算iou, 保留框
-        result_save = [True for _ in range(len(cls_result))]
-        for result_i in range(cls_result):
-            for result_j in range(cls_result):
-                if result_save[result_i] == False:
-                    continue
-                if (calIOU(result_i, result_j) > iou_threshold):
+        # nms
+        cls_result = nms(cls_result, iou_threshold)
+    return result_list
 
-
-
+def drew_result(image: np.ndarray, result_list: list, cls_to_name: dict = {}):
+    drew_image = image
+    list = []
+    for cls_idx in range(len(result_list)):
+        if result_list[cls_idx] is [] or None:
+            continue
+        for result_idx in range(len(result_list[cls_idx])):
+            if result_list[cls_idx][result_idx] is not None:
+                list.append(result_list[cls_idx][result_idx])
+    for result in list:
+        print(result)
+        cv2.rectangle(drew_image, 
+                      (result.x1, result.y1), 
+                      (result.x1 + result.w, result.y1 + result.h),
+                      (255,0,0),
+                      2)
+        text = "cls: " + str(result.cls) +" : conf: " + f"{result.conf:.3f}"
+        cv2.putText(drew_image, text, (result.x1 - 5, result.y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 
+                    0.6,
+                    (255, 255, 255),  # 白色文字
+                    1,
+                    lineType=cv2.LINE_AA)
+    cv2.imshow("result", drew_image)
+    cv2.waitKey(100000000)
 
 def main():
     image = cv2.imread(r"F:\datasets_blue_kfs\images\1.png")
@@ -105,7 +137,8 @@ def main():
 
     input_tensor, (pad_w, pad_h), scale = preprocess(image)
     output_tensor = run(input_tensor, session, input_name, output_name)
-    postprocess(output_tensor, pad_w, pad_h, scale, 0.88)
+    result_list = postprocess(output_tensor, pad_w, pad_h, scale, 0.88)
+    drew_result(image, result_list)
 
 if __name__ == "__main__":
     main()
