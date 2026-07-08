@@ -1,0 +1,17 @@
+# Model files (too large for git)
+model/
+tutorial/model/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# VS Code settings
+.vscode/
+
+# Environment
+.env
+venv/
+.venv/
