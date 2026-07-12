@@ -18,9 +18,9 @@ def resize_padding(image:np.ndarray, target_size: tuple = (640,640), padding_col
     scale = min(target_h / h, target_w / w)
     now_h, now_w = int(h * scale), int(w * scale)
     resized_image = cv2.resize(image, (now_w, now_h), interpolation=cv2.INTER_LINEAR)
-    pad_w = int((target_w - w) / 2)
-    pad_h = int((target_h - h) / 2)
-    now_image = np.full((target_w, target_h, 3), padding_color,dtype=np.uint8)
+    pad_w = int((target_w - now_w) / 2)
+    pad_h = int((target_h - now_h) / 2)
+    now_image = np.full((target_h, target_w, 3), padding_color,dtype=np.uint8)
     now_image[pad_h:pad_h + now_h, pad_w:pad_w + now_w] = resized_image
     return now_image, (pad_w, pad_h), scale
 
@@ -131,13 +131,48 @@ def drew_result(image: np.ndarray, result_list: list, cls_to_name: dict = {}):
     cv2.imshow("result", drew_image)
     cv2.waitKey(100000000)
 
-def main():
-    image = cv2.imread(r"F:\datasets_blue_kfs\images\1.png")
-    session, input_name, output_name = load_model(r"H:\pycharm\test_tensorrt\model\best.onnx", "cpu")
+def process_frame(iamge: np.ndarray, session, input_name, output_name) -> list:
+    try:
+        input_tensor, (pad_w, pad_h), scale = preprocess(iamge)
+        output_tensor = run(input_tensor, session, input_name, output_name)
+        return postprocess(output_tensor, pad_w, pad_h, scale, 0.88)
+    except Exception as e:
+        print(f"process_frame error: {e}")
+        return []
 
-    input_tensor, (pad_w, pad_h), scale = preprocess(image)
-    output_tensor = run(input_tensor, session, input_name, output_name)
-    result_list = postprocess(output_tensor, pad_w, pad_h, scale, 0.88)
+def process_video(open_source: any,  is_drew:bool = True):
+    try:
+        cap =  cv2.VideoCapture(open_source)
+        if not cap.isOpened():
+            raise RuntimeError("process_video: not cap.isOpened()")
+        
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+        height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+        print(f"process_video: cap info: w: {width}, h: {height}, fps: {fps}")
+
+        while True:
+            is_read_ok, frame = cap.read()
+            if not is_read_ok:
+                print("process_video: not is_read_ok")
+                continue
+            result_list = process_frame(frame, True)
+            if is_drew:
+                drew_result(frame, result_list)
+
+    except Exception as e:
+        print(f"process_video error:  {e}")
+    finally:
+        if 'cap' in locals() and cap.isOpened():
+            cap.release()
+        cv2.destroyAllWindows() 
+
+def main():
+    image = cv2.imread(r"H:\pycharm\yolov11\yolov11_proj3\datasets_real_p179\images\image_3.png")
+    model_path = r"H:\pycharm\test_tensorrt\model\best.onnx"
+    session, input_name, output_name = load_model(model_path, "cpu")
+    
+    result_list = process_frame(image, session, input_name, output_name)
     drew_result(image, result_list)
 
 if __name__ == "__main__":
